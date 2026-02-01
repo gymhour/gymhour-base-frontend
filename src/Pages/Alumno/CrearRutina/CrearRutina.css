@@ -715,11 +715,7 @@
     transform: translateY(-2px);
 }
 
-@media (min-width: 721px) {
-    .fab-info {
-        display: none;
-    }
-}
+
 
 /* ===== Backdrop para drawer ===== */
 .info-backdrop {

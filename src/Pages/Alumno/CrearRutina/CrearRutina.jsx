@@ -583,7 +583,7 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
       return toast.error("Ingresá un nombre para la rutina");
     if (!days.length)
       return toast.error("Agregá al menos un día");
-    if (fromEntrenador && !selectedEmail)
+    if (canAssign && !selectedEmail)
       return toast.error("Seleccioná un usuario para asignar la rutina");
     setStep(2);
   };
@@ -1343,6 +1343,21 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
 
   // Responsive / panel info
   useEffect(() => {
+    const handleClickOutside = (event) => {
+      // Si el click fue en la lista de sugerencias, no hacemos nada (el onClick del item ya maneja la selección)
+      if (event.target.closest('.suggestions-list')) {
+        return;
+      }
+      // En cualquier otro caso (click en otro input, click afuera, etc.), cerramos sugerencias
+      setSuggestions({});
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+  useEffect(() => {
     const mql = window.matchMedia('(max-width: 720px)');
     const handler = (e) => setIsMobile(e.matches);
     setIsMobile(mql.matches);
@@ -1408,8 +1423,8 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
         className='content-layout mi-rutina-ctn layout-with-info'
         style={{ display: 'flex', gap: 16 }}
       >
-        {/* FAB abrir info en mobile */}
-        {canAssign && step === 2 && isMobile && !infoOpen && (
+        {/* FAB abrir info (mobile & desktop cuando está cerrado) */}
+        {canAssign && step === 2 && !infoOpen && (
           <button
             className="fab-info"
             onClick={() => setInfoOpen(true)}
@@ -2903,6 +2918,7 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
               role={isMobile ? 'dialog' : undefined}
               aria-modal={isMobile ? 'true' : undefined}
               aria-label="Información contextual"
+              style={(!isMobile && !infoOpen) ? { display: 'none' } : {}}
             >
               <div className="info-panel__header">
                 <h3>Información</h3>
@@ -2914,6 +2930,7 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                   className="info-panel__close"
                   title="Cerrar panel"
                   aria-label="Cerrar panel"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 >
                   ×
                 </button>
