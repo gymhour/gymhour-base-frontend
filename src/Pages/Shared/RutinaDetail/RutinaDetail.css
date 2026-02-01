@@ -217,6 +217,7 @@
     .header-rutina {
         padding: 10px 16px;
     }
+
     .tab-dias {
         padding: 15px 16px;
     }
@@ -232,16 +233,15 @@
     overflow: hidden;
     border: 1px solid var(--gh-border);
     background: #000;
-  }
-  
-  .gh-media-slot .gh-ej-ytbadge {
+}
+
+.gh-media-slot .gh-ej-ytbadge {
     position: absolute;
     right: 6px;
     bottom: 6px;
-    background: rgba(0,0,0,.6);
+    background: rgba(0, 0, 0, .6);
     color: #fff;
     font-size: 12px;
     padding: 2px 6px;
     border-radius: 6px;
-  }
-  
+}

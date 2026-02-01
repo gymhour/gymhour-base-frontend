@@ -324,9 +324,9 @@ const renderDropSetPDF = (doc, { M, pageW, title, items, startY }) => {
 const safeFileName = (titulo, alumnoObj) => {
   const alumnoName = alumnoObj
     ? `${pretty(alumnoObj?.nombre, '')} ${pretty(
-        alumnoObj?.apellido,
-        ''
-      )}`.trim()
+      alumnoObj?.apellido,
+      ''
+    )}`.trim()
     : 'alumno';
   const today = new Date().toISOString().slice(0, 10);
   const raw = `Rutina_${alumnoName || 'alumno'}_${titulo || 'detalle'}_${today}.pdf`;
@@ -339,6 +339,7 @@ const safeFileName = (titulo, alumnoObj) => {
 const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
   const { id } = useParams();
   const [rutina, setRutina] = useState(null);
+  const [activeSemanaId, setActiveSemanaId] = useState(null);
   const [activeDiaKey, setActiveDiaKey] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -352,8 +353,16 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
         const data = await apiService.getRutinaById(id);
         if (!mounted) return;
         setRutina(data);
-        const diasArr = normalizeDias(data?.dias);
-        setActiveDiaKey(diasArr[0]?.key || null);
+
+        if (data?.semanas && data.semanas.length > 0) {
+          const firstSemana = data.semanas[0];
+          setActiveSemanaId(firstSemana.id);
+          const diasArr = normalizeDias(firstSemana.dias);
+          setActiveDiaKey(diasArr[0]?.key || null);
+        } else {
+          const diasArr = normalizeDias(data?.dias);
+          setActiveDiaKey(diasArr[0]?.key || null);
+        }
       } catch (e) {
         console.error(e);
         if (!mounted) return;
@@ -367,7 +376,15 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
     };
   }, [id]);
 
-  const dias = useMemo(() => normalizeDias(rutina?.dias), [rutina]);
+  const dias = useMemo(() => {
+    if (rutina?.semanas && rutina.semanas.length > 0) {
+      const currentSemana =
+        rutina.semanas.find((s) => s.id === activeSemanaId) ||
+        rutina.semanas[0];
+      return normalizeDias(currentSemana?.dias);
+    }
+    return normalizeDias(rutina?.dias);
+  }, [rutina, activeSemanaId]);
 
   const headerSubtitle = useMemo(() => {
     if (!rutina) return '';
@@ -396,9 +413,9 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
       }
     };
 
-    const addSectionTitle = (text) => {
+    const addSectionTitle = (text, isSub = false) => {
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(14);
+      doc.setFontSize(isSub ? 12 : 14);
       doc.setTextColor(0);
       doc.text(text, M, cursorY);
       cursorY += 10;
@@ -420,15 +437,15 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
 
     const alumno = rutina?.alumno
       ? `${pretty(rutina.alumno.nombre, '')} ${pretty(
-          rutina.alumno.apellido,
-          ''
-        )}`.trim()
+        rutina.alumno.apellido,
+        ''
+      )}`.trim()
       : '';
     const entrenador = rutina?.entrenador
       ? `${pretty(rutina.entrenador.nombre, '')} ${pretty(
-          rutina.entrenador.apellido,
-          ''
-        )}`.trim()
+        rutina.entrenador.apellido,
+        ''
+      )}`.trim()
       : '—';
     const creada = rutina?.createdAt
       ? new Date(rutina.createdAt).toLocaleDateString()
@@ -462,52 +479,172 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
     doc.line(M, cursorY, pageW - M, cursorY);
     cursorY += 18;
 
-    const diasArr = normalizeDias(rutina?.dias);
-    if (diasArr.length === 0) {
+    // Normalizamos para iterar: array de { nombreSemana?, dias: [] }
+    let estructuras = [];
+    if (rutina.semanas && rutina.semanas.length > 0) {
+      estructuras = rutina.semanas.map((s) => ({
+        titulo: s.nombre || `Semana ${s.numero}`,
+        dias: normalizeDias(s.dias),
+      }));
+    } else {
+      estructuras = [
+        {
+          titulo: null, // Sin título de semana (routine legacy)
+          dias: normalizeDias(rutina.dias),
+        },
+      ];
+    }
+
+    // Verificamos si hay algo que imprimir
+    const totalDias = estructuras.reduce(
+      (acc, curr) => acc + curr.dias.length,
+      0
+    );
+    if (totalDias === 0) {
       doc.setFont('helvetica', 'italic');
       doc.text('Esta rutina no tiene días cargados.', M, cursorY);
       doc.save(safeFileName(titulo, rutina?.alumno));
       return;
     }
 
-    diasArr.forEach((d, idxDia) => {
-      ensureSpace(80);
-      const nombreDia = pretty(
-        d?.nombre,
-        d?.key?.replace('dia', 'Día ') || `Día ${idxDia + 1}`
-      );
-      addSectionTitle(nombreDia);
-
-      const bloques = Array.isArray(d?.bloques) ? d.bloques : [];
-      if (bloques.length === 0) {
-        doc.setFont('helvetica', 'italic');
-        doc.setFontSize(11);
-        doc.text('Este día no tiene bloques cargados.', M, cursorY);
-        cursorY += 18;
-        return;
+    // Iteramos Estructuras (Semanas) -> Días -> Bloques
+    estructuras.forEach((sem, idxSem) => {
+      // Si hay semanas explícitas, mostrar título de la semana
+      if (sem.titulo && estructuras.length > 1) {
+        ensureSpace(40);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.setTextColor(0);
+        doc.text(sem.titulo, M, cursorY);
+        cursorY += 20;
       }
 
-      bloques.forEach((b, iB) => {
-        ensureSpace(70);
+      sem.dias.forEach((d, idxDia) => {
+        ensureSpace(80);
+        const nombreDia = pretty(
+          d?.nombre,
+          d?.key?.replace('dia', 'Día ') || `Día ${idxDia + 1}`
+        );
+        addSectionTitle(nombreDia);
 
-        // —— DROPSET PDF
-        if (b?.type === 'SETS_REPS' && isDropSetBlockPDF(b)) {
-          const items = getBloqueItems(b);
-          const nombre =
-            (b?.nombreEj ||
+        const bloques = Array.isArray(d?.bloques) ? d.bloques : [];
+        if (bloques.length === 0) {
+          doc.setFont('helvetica', 'italic');
+          doc.setFontSize(11);
+          doc.text('Este día no tiene bloques cargados.', M, cursorY);
+          cursorY += 18;
+          return;
+        }
+
+        bloques.forEach((b, iB) => {
+          ensureSpace(70);
+
+          // —— DROPSET PDF
+          if (b?.type === 'SETS_REPS' && isDropSetBlockPDF(b)) {
+            const items = getBloqueItems(b);
+            const nombre = (
+              b?.nombreEj ||
               items[0]?.ejercicio?.nombre ||
-              'Ejercicio').trim();
-          const title = `DROPSET — ${nombre}`;
+              'Ejercicio'
+            ).trim();
+            const title = `DROPSET — ${nombre}`;
 
-          const endY = renderDropSetPDF(doc, {
-            M,
-            pageW,
-            title,
-            items,
-            startY: cursorY,
+            const endY = renderDropSetPDF(doc, {
+              M,
+              pageW,
+              title,
+              items,
+              startY: cursorY,
+            });
+
+            cursorY = endY + 10;
+
+            if (iB !== bloques.length - 1) {
+              doc.setDrawColor(230);
+              doc.line(M, cursorY, pageW - M, cursorY);
+              cursorY += 10;
+            }
+            return;
+          }
+
+          // —— Resto de bloques
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(12);
+          doc.setTextColor(0);
+          const tituloBloque = typeLabel(b?.type, b);
+          if (tituloBloque) {
+            doc.text(tituloBloque, M, cursorY);
+            cursorY += 6;
+          }
+
+          const rows = (b?.ejercicios || []).map((e) => {
+            const ej = e?.ejercicio || {};
+            const nombre = pretty(ej?.nombre, 'Ejercicio');
+            const reps = deriveReps(e, b);
+            const peso = derivePeso(e, b);
+            return {
+              ejercicio: nombre,
+              reps: reps || '',
+              peso: peso || '',
+            };
           });
 
-          cursorY = endY + 10;
+          if (rows.length === 0) {
+            doc.setFont('helvetica', 'italic');
+            doc.setFontSize(10);
+            doc.text('Este bloque no tiene ejercicios.', M, cursorY + 16);
+            cursorY += 32;
+          } else {
+            autoTable(doc, {
+              startY: cursorY + 10,
+              margin: { left: M, right: M },
+              theme: 'grid',
+              styles: {
+                font: 'helvetica',
+                fontSize: 9,
+                cellPadding: 4,
+                overflow: 'linebreak',
+                textColor: 0,
+              },
+              headStyles: {
+                fillColor: [240, 240, 240],
+                textColor: 0,
+                fontStyle: 'bold',
+              },
+              head: [['Ejercicio', 'Series / Reps', 'Peso']],
+              body: rows.map((r) => [r.ejercicio, r.reps, r.peso]),
+            });
+            cursorY = (doc.lastAutoTable?.finalY || cursorY) + 10;
+          }
+
+          // Meta TABATA
+          if (
+            b?.type === 'TABATA' &&
+            (b?.cantSeries || b?.tiempoTrabajoDescansoTabata || b?.descTabata)
+          ) {
+            ensureSpace(18);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            const meta = [];
+            if (b?.descTabata) meta.push(`Pausa entre series: ${b.descTabata}`);
+            if (meta.length) {
+              doc.text(meta.join('   ·   '), M, cursorY);
+              cursorY += 12;
+            }
+          }
+
+          // Meta ROUNDS
+          if (pretty(b?.descansoRonda, '')) {
+            ensureSpace(16);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text(
+              `Descanso entre rondas: ${b.descansoRonda}`,
+              M,
+              cursorY
+            );
+            cursorY += 12;
+          }
 
           // Separador entre bloques
           if (iB !== bloques.length - 1) {
@@ -515,105 +652,21 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
             doc.line(M, cursorY, pageW - M, cursorY);
             cursorY += 10;
           }
-          return; // siguiente bloque
-        }
-
-        // —— Resto de bloques
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(12);
-        doc.setTextColor(0);
-        const tituloBloque = typeLabel(b?.type, b);
-        if (tituloBloque) {
-          doc.text(tituloBloque, M, cursorY);
-          cursorY += 6;
-        }
-
-        const rows = (b?.ejercicios || []).map((e) => {
-          const ej = e?.ejercicio || {};
-          const nombre = pretty(ej?.nombre, 'Ejercicio');
-          const reps = deriveReps(e, b);
-          const peso = derivePeso(e, b);
-          return {
-            ejercicio: nombre,
-            reps: reps || '',
-            peso: peso || '',
-          };
         });
 
-        if (rows.length === 0) {
-          doc.setFont('helvetica', 'italic');
-          doc.setFontSize(10);
-          doc.text('Este bloque no tiene ejercicios.', M, cursorY + 16);
-          cursorY += 32;
-        } else {
-          autoTable(doc, {
-            startY: cursorY + 10,
-            margin: { left: M, right: M },
-            theme: 'grid',
-            styles: {
-              font: 'helvetica',
-              fontSize: 9,
-              cellPadding: 4,
-              overflow: 'linebreak',
-              textColor: 0,
-            },
-            headStyles: {
-              fillColor: [240, 240, 240],
-              textColor: 0,
-              fontStyle: 'bold',
-            },
-            head: [['Ejercicio', 'Series / Reps', 'Peso']],
-            body: rows.map((r) => [r.ejercicio, r.reps, r.peso]),
-          });
-          cursorY = (doc.lastAutoTable?.finalY || cursorY) + 10;
-        }
-
-        // Meta TABATA
-        if (
-          b?.type === 'TABATA' &&
-          (b?.cantSeries ||
-            b?.tiempoTrabajoDescansoTabata ||
-            b?.descTabata)
-        ) {
-          ensureSpace(18);
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(9);
-          const meta = [];
-          if (b?.descTabata)
-            meta.push(`Pausa entre series: ${b.descTabata}`);
-          if (meta.length) {
-            doc.text(meta.join('   ·   '), M, cursorY);
-            cursorY += 12;
-          }
-        }
-
-        // Meta ROUNDS
-        if (pretty(b?.descansoRonda, '')) {
-          ensureSpace(16);
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(9);
-          doc.text(
-            `Descanso entre rondas: ${b.descansoRonda}`,
-            M,
-            cursorY
-          );
-          cursorY += 12;
-        }
-
-        // Separador entre bloques
-        if (iB !== bloques.length - 1) {
-          doc.setDrawColor(230);
+        // Separador entre días
+        if (idxDia !== sem.dias.length - 1) {
+          ensureSpace(20);
+          doc.setDrawColor(180);
           doc.line(M, cursorY, pageW - M, cursorY);
-          cursorY += 10;
+          cursorY += 16;
         }
       });
 
-      // Separador entre días
-      if (idxDia !== diasArr.length - 1) {
-        ensureSpace(20);
-        doc.setDrawColor(180);
-        doc.line(M, cursorY, pageW - M, cursorY);
-        cursorY += 16;
+      // Separador extra entre semanas (si hay más de una)
+      if (idxSem !== estructuras.length - 1) {
+        doc.addPage();
+        cursorY = M;
       }
     });
 
@@ -680,12 +733,12 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                     {pretty(
                       rutina?.alumno
                         ? `${pretty(
-                            rutina.alumno.nombre,
-                            ''
-                          )} ${pretty(
-                            rutina.alumno.apellido,
-                            ''
-                          )}`.trim()
+                          rutina.alumno.nombre,
+                          ''
+                        )} ${pretty(
+                          rutina.alumno.apellido,
+                          ''
+                        )}`.trim()
                         : ''
                     )}
                   </div>
@@ -696,12 +749,12 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                     {pretty(
                       rutina?.entrenador
                         ? `${pretty(
-                            rutina.entrenador.nombre,
-                            ''
-                          )} ${pretty(
-                            rutina.entrenador.apellido,
-                            ''
-                          )}`.trim()
+                          rutina.entrenador.nombre,
+                          ''
+                        )} ${pretty(
+                          rutina.entrenador.apellido,
+                          ''
+                        )}`.trim()
                         : '—'
                     )}
                   </div>
@@ -712,8 +765,8 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                     {pretty(
                       rutina?.createdAt
                         ? new Date(
-                            rutina.createdAt
-                          ).toLocaleDateString()
+                          rutina.createdAt
+                        ).toLocaleDateString()
                         : ''
                     )}
                   </div>
@@ -731,6 +784,32 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                 </div>
               )}
             </div>
+
+            {/* Selector de Semanas (si aplica) */}
+            {rutina?.semanas && rutina.semanas.length > 0 && (
+              <div style={{ padding: '12px 40px' }}>
+                <div className="gh-tabs">
+                  <div className="gh-tabs-list" role="tablist">
+                    {rutina.semanas.map((sem) => (
+                      <button
+                        key={sem.id}
+                        role="tab"
+                        aria-selected={activeSemanaId === sem.id}
+                        className={`gh-tab ${activeSemanaId === sem.id ? 'active' : ''
+                          }`}
+                        onClick={() => {
+                          setActiveSemanaId(sem.id);
+                          const d = normalizeDias(sem.dias);
+                          setActiveDiaKey(d[0]?.key || null);
+                        }}
+                      >
+                        {sem.nombre || `Semana ${sem.numero}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Tabs de días */}
             <div
@@ -756,11 +835,10 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                       aria-selected={
                         activeDiaKey === d.key
                       }
-                      className={`gh-tab ${
-                        activeDiaKey === d.key
-                          ? 'active'
-                          : ''
-                      }`}
+                      className={`gh-tab ${activeDiaKey === d.key
+                        ? 'active'
+                        : ''
+                        }`}
                       onClick={() =>
                         setActiveDiaKey(d.key)
                       }
@@ -801,7 +879,7 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                         {bloques.map((b) => {
                           if (
                             b?.type ===
-                              'SETS_REPS' &&
+                            'SETS_REPS' &&
                             isDropSetBlock(b)
                           ) {
                             return (
@@ -862,7 +940,7 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                                 {(b.ejercicios ||
                                   [])
                                   .length ===
-                                0 ? (
+                                  0 ? (
                                   <div className="gh-muted sm">
                                     Este
                                     bloque no
@@ -895,11 +973,11 @@ const RutinaDetail = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                                         );
                                       const title =
                                         peso &&
-                                        String(
-                                          peso
-                                        )
-                                          .trim()
-                                          .length >
+                                          String(
+                                            peso
+                                          )
+                                            .trim()
+                                            .length >
                                           0
                                           ? `${nombre} - ${peso}`
                                           : nombre;

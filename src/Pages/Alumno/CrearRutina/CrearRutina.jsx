@@ -346,6 +346,18 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
   ]);
   const [activeDayIndex, setActiveDayIndex] = useState(0);
 
+  // Semanas
+  const [hasWeeks, setHasWeeks] = useState(false);
+  const [weeks, setWeeks] = useState([
+    {
+      key: 'semana1',
+      nombre: 'Semana 1',
+      numero: 1,
+      dias: [{ key: 'dia1', nombre: '', descripcion: '', blocks: [] }]
+    }
+  ]);
+  const [activeWeekIndex, setActiveWeekIndex] = useState(0);
+
   // Responsive
   const [isMobile, setIsMobile] = useState(false);
 
@@ -448,8 +460,9 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
         setSelectedEmail(selected);
       }
 
-      const mapBloques = (bloquesApi = []) =>
-        bloquesApi.map(b => {
+      const mapBloques = (list) => {
+        if (!Array.isArray(list)) return [];
+        return list.map(b => {
           const converted = convertApiBlockData(b);
           const isDrop = converted.__isDropSet === true;
           const blockType = isDrop
@@ -471,11 +484,14 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
             data
           };
         });
+      };
 
-      if (r?.dias && typeof r.dias === 'object') {
-        const keys = Object.keys(r.dias).sort();
-        const loaded = keys.map((k, idx) => {
-          const d = r.dias[k] || {};
+      // Helper para parsear días de un objeto de días
+      const parseDaysFromObj = (diasObj) => {
+        if (!diasObj) return [];
+        const keys = Object.keys(diasObj).sort();
+        return keys.map((k, idx) => {
+          const d = diasObj[k] || {};
           const blocks = Array.isArray(d.bloques)
             ? mapBloques(d.bloques)
             : [];
@@ -486,23 +502,69 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
             blocks
           };
         });
-        setDays(
-          loaded.length
-            ? loaded
-            : [{ key: 'dia1', nombre: '', descripcion: '', blocks: [] }]
-        );
+      };
+
+      if (r?.semanas && Object.keys(r.semanas).length > 0) {
+        // WITH WEEKS
+        setHasWeeks(true);
+        const wKeys = Object.keys(r.semanas).sort();
+        const loadedWeeks = wKeys.map((wk, idx) => {
+          const wData = r.semanas[wk];
+          const daysParsed = parseDaysFromObj(wData.dias);
+          return {
+            key: `semana${idx + 1}`,
+            nombre: wData.nombre || `Semana ${idx + 1}`,
+            numero: wData.numero || (idx + 1),
+            dias: daysParsed.length
+              ? daysParsed
+              : [{ key: 'dia1', nombre: '', descripcion: '', blocks: [] }]
+          };
+        });
+
+        setWeeks(loadedWeeks);
+        setActiveWeekIndex(0);
+        setDays(loadedWeeks[0].dias);
         setActiveDayIndex(0);
+
+      } else if (r?.dias && typeof r.dias === 'object') {
+        // NO WEEKS (Old structure with 'dias' object)
+        setHasWeeks(false);
+        const loadedDays = parseDaysFromObj(r.dias);
+        const finalDays = loadedDays.length
+          ? loadedDays
+          : [{ key: 'dia1', nombre: '', descripcion: '', blocks: [] }];
+
+        setDays(finalDays);
+        setActiveDayIndex(0);
+
+        // Populate first week just in case they toggle "Has Weeks" ON
+        setWeeks([{
+          key: 'semana1',
+          nombre: 'Semana 1',
+          numero: 1,
+          dias: finalDays
+        }]);
+
       } else {
+        // FLAT BLOCK LIST / LEGACY
+        setHasWeeks(false);
         const blocks = Array.isArray(r.Bloques)
           ? mapBloques(r.Bloques)
           : [];
-        setDays([{
+        const finalDays = [{
           key: 'dia1',
           nombre: '',
           descripcion: '',
           blocks
-        }]);
+        }];
+        setDays(finalDays);
         setActiveDayIndex(0);
+        setWeeks([{
+          key: 'semana1',
+          nombre: 'Semana 1',
+          numero: 1,
+          dias: finalDays
+        }]);
       }
 
       await afterPaint();
@@ -526,7 +588,114 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
     setStep(2);
   };
 
-  // Tabs días
+  /* ================= Weeks Logic ================= */
+  const syncCurrentDaysToWeek = (currentWeeksState) => {
+    // Updates the 'weeks' array at activeWeekIndex with the current 'days' state
+    const newWeeks = [...currentWeeksState];
+    if (newWeeks[activeWeekIndex]) {
+      newWeeks[activeWeekIndex] = {
+        ...newWeeks[activeWeekIndex],
+        dias: days
+      };
+    }
+    return newWeeks;
+  };
+
+  const handleWeekChange = (newIndex) => {
+    if (newIndex === activeWeekIndex) return;
+    // 1. Sync current days to the OLD week
+    const syncedWeeks = syncCurrentDaysToWeek(weeks);
+    // 2. Set new active week
+    setWeeks(syncedWeeks);
+    setActiveWeekIndex(newIndex);
+    // 3. Load active week days into view
+    const nextWeekDays = syncedWeeks[newIndex]?.dias || [];
+    setDays(nextWeekDays.length ? nextWeekDays : [{ key: 'dia1', nombre: '', descripcion: '', blocks: [] }]);
+    setActiveDayIndex(0);
+  };
+
+  const addWeek = () => {
+    // Sync first
+    const syncedWeeks = syncCurrentDaysToWeek(weeks);
+    const nextNum = syncedWeeks.length + 1;
+    const newWeek = {
+      key: `semana${nextNum}`,
+      nombre: `Semana ${nextNum}`,
+      numero: nextNum,
+      dias: [{ key: 'dia1', nombre: '', descripcion: '', blocks: [] }]
+    };
+    const newWeeksList = [...syncedWeeks, newWeek];
+    setWeeks(newWeeksList);
+    // Switch to new week
+    setActiveWeekIndex(newWeeksList.length - 1);
+    setDays(newWeek.dias);
+    setActiveDayIndex(0);
+  };
+
+  const removeWeek = (idx) => {
+    if (weeks.length <= 1) return toast.info("Debe haber al menos una semana");
+    // If we are removing the active week, we need care
+    // If removing other week, just remove it from array
+
+    let currentWeeks = [...weeks];
+    // If removing current view's week, no need to sync `days` to it, it's gonna be deleted.
+    // However if removing ANOTHER week, we should sync current days to current week just in case.
+    if (idx !== activeWeekIndex) {
+      currentWeeks = syncCurrentDaysToWeek(currentWeeks);
+    }
+
+    const filtered = currentWeeks.filter((_, i) => i !== idx);
+    // Re-assign keys/numbers
+    const remapped = filtered.map((w, i) => ({
+      ...w,
+      key: `semana${i + 1}`,
+      numero: i + 1,
+      nombre: w.nombre.startsWith('Semana ') ? `Semana ${i + 1}` : w.nombre
+    }));
+
+    setWeeks(remapped);
+
+    // If we removed the active week
+    if (idx === activeWeekIndex) {
+      const newIdx = Math.max(0, idx - 1);
+      setActiveWeekIndex(newIdx);
+      setDays(remapped[newIdx].dias);
+      setActiveDayIndex(0);
+    } else if (idx < activeWeekIndex) {
+      // If we removed a week BEFORE active, shift active index left
+      setActiveWeekIndex(activeWeekIndex - 1);
+    }
+  };
+
+  const toggleHasWeeks = () => {
+    const newValue = !hasWeeks;
+    setHasWeeks(newValue);
+    if (newValue) {
+      // Enabled weeks: Sync current days to week 1 (already aligned if we kept sync, but ensure it)
+      const w = [...weeks];
+      w[0].dias = days;
+      // Also ensure we only have 1 week if it was fresh? Or keep existing?
+      // "weeks" state tracks weeks, so we just continue using it.
+      setWeeks(w);
+      if (weeks.length === 0) {
+        // Should not happen, but safeguard
+        setWeeks([{
+          key: 'semana1',
+          nombre: 'Semana 1',
+          numero: 1,
+          dias: days
+        }]);
+      }
+    } else {
+      // Disabled weeks: We only care about current active week's days?
+      // Or should we flatten?
+      // Requirement: "se puede enviar el post tanto con semanas como sin semanas"
+      // Usually if I toggle OFF weeks, I likely only want to keep the content of the CURRENT week (or Week 1).
+      // Let's just keep 'days' as is (which is the currently viewed week).
+      // The payload builder will ignore 'weeks' array and just use 'days'.
+    }
+  };
+
   const addDay = () => {
     const nextIndex = days.length + 1;
     const newKey = `dia${nextIndex}`;
@@ -944,13 +1113,12 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
       ? Number(localStorage.getItem("usuarioId"))
       : null;
 
-    const diasObj = {};
-
-    days.forEach((d, i) => {
-      const key = `dia${i + 1}`;
+    // Helper to format a single "Day" object for API
+    const formatDay = (dayObj, dayIndex) => {
+      const key = `dia${dayIndex + 1}`;
       const bloques = [];
 
-      (d.blocks || []).forEach(block => {
+      (dayObj.blocks || []).forEach(block => {
         const type = displayToApiType(block.type);
 
         // DROPSET → se guarda como SETS_REPS con múltiples filas mismo ejercicio
@@ -1084,22 +1252,65 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
         }
       });
 
-      diasObj[key] = {
-        nombre: d.nombre || `Día ${i + 1}`,
-        descripcion: d.descripcion || '',
-        bloques
+      return {
+        key,
+        data: {
+          nombre: dayObj.nombre || `Día ${dayIndex + 1}`,
+          descripcion: dayObj.descripcion || '',
+          bloques
+        }
       };
-    });
-
-    return {
-      ID_Usuario: userId,
-      ID_Entrenador: entrenadorId,
-      nombre: formData.nombre,
-      desc: formData.descripcion,
-      claseRutina: selectedClase || "Combinada",
-      grupoMuscularRutina: selectedGrupoMuscular || "Mixto",
-      dias: diasObj
     };
+
+
+    if (!hasWeeks) {
+      // Legacy / simple structure
+      const diasObj = {};
+      days.forEach((d, i) => {
+        const { key, data } = formatDay(d, i);
+        diasObj[key] = data;
+      });
+
+      return {
+        ID_Usuario: userId,
+        ID_Entrenador: entrenadorId,
+        nombre: formData.nombre,
+        desc: formData.descripcion,
+        claseRutina: selectedClase || "Combinada",
+        grupoMuscularRutina: selectedGrupoMuscular || "Mixto",
+        dias: diasObj
+      };
+    } else {
+      // With Weeks
+      // First ensure active days are sync'ed
+      const finalWeeks = syncCurrentDaysToWeek(weeks);
+      const semanasObj = {};
+
+      finalWeeks.forEach((w, wkIdx) => {
+        const wkKey = `semana${wkIdx + 1}`;
+        const wkDaysObj = {};
+        (w.dias || []).forEach((d, dIdx) => {
+          const { key, data } = formatDay(d, dIdx);
+          wkDaysObj[key] = data;
+        });
+
+        semanasObj[wkKey] = {
+          nombre: w.nombre || `Semana ${wkIdx + 1}`,
+          numero: wkIdx + 1,
+          dias: wkDaysObj
+        };
+      });
+
+      return {
+        ID_Usuario: userId,
+        ID_Entrenador: entrenadorId,
+        nombre: formData.nombre,
+        desc: formData.descripcion,
+        claseRutina: selectedClase || "Combinada",
+        grupoMuscularRutina: selectedGrupoMuscular || "Mixto",
+        semanas: semanasObj
+      };
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -1343,6 +1554,54 @@ const CrearRutina = ({ fromAdmin, fromEntrenador, fromAlumno }) => {
                   onClick={() => setStep(1)}
                   style={{ marginBottom: '16px' }}
                 />
+
+                {/* Weeks Toggle */}
+                <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    id="hasWeeksToggle"
+                    checked={hasWeeks}
+                    onChange={toggleHasWeeks}
+                    style={{ width: '14px', height: '14px', cursor: 'pointer' }}
+                  />
+                  <label htmlFor="hasWeeksToggle" style={{ cursor: 'pointer', userSelect: 'none', fontWeight: 500 }}>
+                    Organizar por semanas
+                  </label>
+                </div>
+
+                {/* Weeks Tabs */}
+                {/* Weeks Tabs */}
+                {hasWeeks && (
+                  <div className="days-tabs">
+                    {weeks.map((w, idx) => (
+                      <div
+                        key={w.key}
+                        className={`day-tab ${idx === activeWeekIndex ? 'active' : ''}`}
+                        onClick={() => handleWeekChange(idx)}
+                      >
+                        <span className="day-tab-label">{`Semana ${idx + 1}`}</span>
+                        <button
+                          className="day-tab-close"
+                          title="Eliminar semana"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeWeek(idx);
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      className="day-tab add"
+                      onClick={addWeek}
+                      type="button"
+                    >
+                      + Semana
+                    </button>
+                  </div>
+                )}
 
                 {/* Tabs días (reordenables) */}
                 <div
